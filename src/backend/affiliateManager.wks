@@ -1,0 +1,153 @@
+```javascript
+import wixData from 'wix-data';
+import { currentUser } from 'wix-users-backend';
+import { multiply } from 'backend/new-module.web';
+
+// Collection names for affiliate tracking
+const AFFILIATE_COLLECTION = 'Affiliates';
+const REFERRAL_COLLECTION = 'Referrals';
+const EXISTING_USER_COLLECTION = 'ExistingUsers';
+
+// Function to generate a unique invite code
+function generateUniqueCode() {
+    return Math.random().toString(36).substr(2, 8);
+}
+
+// Generate a unique invite code for a user
+export async function generateInviteCode() {
+    const userEmail = await currentUser.getEmail();
+    
+    try {
+        // Check if user already has an invite code
+        const result = await wixData.query(AFFILIATE_COLLECTION)
+            .eq('userId', userEmail)
+            .find();
+
+        if (result.items.length > 0) {
+            return {
+                success: true,
+                code: result.items[0].inviteCode
+            };
+        }
+        
+        // Generate new unique code
+        const code = generateUniqueCode();
+        
+        // Insert new affiliate record into database
+        const insertData = {
+            userId: userEmail,
+            inviteCode: code,
+            createdDate: new Date(),
+            totalReferrals: 0,
+            pendingRewards: 0,
+            paidRewards: 0
+        };
+        await wixData.insert(AFFILIATE_COLLECTION, insertData);
+        
+        return {
+            success: true,
+            code: code
+        };
+    } catch (error) {
+        console.error("Error generating invite code:", error);
+        return {
+            success: false,
+            error: "Failed to generate invite code"
+        };
+    }
+}
+
+// Track a new referral
+export async function trackReferral(userId, referredUserEmail) {
+    const userEmail = await currentUser.getEmail();
+    
+    try {
+        // Check if the referrer exists in the Affiliates collection
+        const referrerResult = await wixData.query(AFFILIATE_COLLECTION)
+            .eq('userId', userEmail)
+            .find();
+        
+        if (referrerResult.items.length === 0) {
+            return {
+                success: false,
+                error: "Referrer not found"
+            };
+        }
+        
+        const referrerData = referrerResult.items[0];
+        
+        // Check if the referred user exists in the ExistingUsers collection
+        const existingUserResult = await wixData.query(EXISTING_USER_COLLECTION)
+            .eq('email', referredUserEmail)
+            .find();
+        
+        if (existingUserResult.items.length > 0) {
+            return {
+                success: false,
+                error: "Referred user already exists"
+            };
+        }
+        
+        // Insert new referral record
+        const referralData = {
+            referrerId: userEmail,
+            referredUser: referredUserEmail,
+            dateReferred: new Date(),
+            status: "pending"
+        };
+        await wixData.insert(REFERRAL_COLLECTION, referralData);
+        
+        // Update affiliate stats
+        const updateData = {
+            _id: referrerData._id,
+            totalReferrals: referrerData.totalReferrals + 1,
+            pendingRewards: await multiply(referrerData.pendingRewards, 10) // $10 per referral
+        };
+        await wixData.update(AFFILIATE_COLLECTION, updateData);
+        
+        return {
+            success: true
+        };
+    } catch (error) {
+        console.error("Error tracking referral:", error);
+        return {
+            success: false,
+            error: "Failed to track referral"
+        };
+    }
+}
+
+// Get affiliate stats for current user
+export async function getAffiliateStats() {
+    const userEmail = await currentUser.getEmail();
+    
+    try {
+        const result = await wixData.query(AFFILIATE_COLLECTION)
+            .eq("userId", userEmail)
+            .find();
+            
+        if (result.items.length === 0) {
+            return {
+                success: true,
+                stats: {
+                    totalReferrals: 0,
+                    pendingRewards: 0,
+                    paidRewards: 0,
+                    inviteCode: null
+                }
+            };
+        }
+        
+        return {
+            success: true,
+            stats: result.items[0]
+        };
+    } catch (error) {
+        console.error("Error fetching affiliate stats:", error);
+        return {
+            success: false,
+            error: "Failed to fetch affiliate stats"
+        };
+    }
+}
+```
